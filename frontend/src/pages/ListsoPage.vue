@@ -197,6 +197,70 @@
     </div>
   </div>
 
+  <div
+    v-if="showSearchResultPopup"
+    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+    @click.self="closeSearchResultPopup"
+  >
+    <div class="bg-white rounded-lg w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
+      <div class="flex justify-between items-center p-4 border-b">
+        <div>
+          <h3 class="font-bold text-lg text-gray-800">Pilih Varian Barang</h3>
+          <p class="text-sm text-gray-500">
+            Ditemukan beberapa barang untuk pencarian
+            <span class="font-semibold">{{ pendingSearchKeyword }}</span>
+          </p>
+        </div>
+        <button @click="closeSearchResultPopup" class="text-gray-500 text-xl">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-4 space-y-3">
+        <button
+          v-for="(item, index) in searchResultItems"
+          :key="`${item.barang_id || item.kode_plu}-${index}`"
+          @click="selectSearchResultItem(item)"
+          class="w-full rounded-lg border border-slate-200 p-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="font-semibold text-slate-900">
+                {{ item.nama_barang || "-" }}
+              </div>
+              <div class="mt-1 text-sm text-slate-600">
+                PLU: {{ item.kode_plu || "-" }} • Barcode:
+                {{ item.kode_barcode || "-" }}
+              </div>
+              <div class="mt-1 text-xs text-slate-500">
+                UoM: {{ item.uom || "-" }} • Tipe: {{ item.tipe_barang || "-" }}
+              </div>
+            </div>
+            <span
+              class="rounded-full px-3 py-1 text-xs font-semibold"
+              :class="
+                item.form_mode === 'edit'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-emerald-100 text-emerald-700'
+              "
+            >
+              {{ item.form_mode === "edit" ? "Sudah Ada" : "Barang Baru" }}
+            </span>
+          </div>
+        </button>
+      </div>
+
+      <div class="border-t p-4">
+        <button
+          @click="closeSearchResultPopup"
+          class="w-full rounded-lg bg-gray-600 py-2 font-semibold text-white hover:bg-gray-700"
+        >
+          Tutup
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- POPUP BARANG TIDAK DITEMUKAN -->
   <div
     v-if="showNotFoundPopup"
@@ -674,6 +738,7 @@ export default {
       showModal: false,
       showItemScanner: false,
       showItemDetail: false,
+      showSearchResultPopup: false,
       showNotFoundPopup: false,
       showPendingSavePopup: false,
       pendingSaveActionLabel: "logout",
@@ -730,6 +795,9 @@ export default {
       itemQuantity: 1,
       itemNote: "",
       editIndex: null,
+      searchResultItems: [],
+      pendingSearchKeyword: "",
+      pendingSearchCommand: null,
       isExportingPdf: false,
       tokenExpiryInterval: null,
       locationStatusInterval: null,
@@ -2332,6 +2400,76 @@ export default {
       }, 2000);
     },
 
+    closeSearchResultPopup() {
+      this.showSearchResultPopup = false;
+      this.searchResultItems = [];
+      this.pendingSearchKeyword = "";
+      this.pendingSearchCommand = null;
+    },
+
+    async selectSearchResultItem(itemData) {
+      const pendingCommand = this.pendingSearchCommand || {
+        isBulkCommand: false,
+        qty: 0,
+      };
+
+      this.closeSearchResultPopup();
+
+      const existingIndex = this.findExistingItemIndex(
+        itemData,
+        itemData.kode_plu || itemData.kode_barcode || "",
+      );
+
+      this.selectedItem = {
+        item_detail_id:
+          itemData.item_detail_id || itemData.ISITEAMITEMDETAIL_ID || "",
+        barang_id: itemData.barang_id || "",
+        kode_plu: itemData.kode_plu || "",
+        kode_barcode: itemData.kode_barcode || "",
+        nama_barang: itemData.nama_barang || "",
+        uom: itemData.uom || "",
+        tipe_barang: itemData.tipe_barang || "",
+        is_decimal: itemData.is_decimal || 0,
+      };
+
+      if (pendingCommand.isBulkCommand) {
+        await this.tambahItemTanpaPopup(itemData, pendingCommand.qty);
+        return;
+      }
+
+      if (existingIndex !== -1) {
+        const existingItem = this.items[existingIndex];
+        this.selectedItem = {
+          item_detail_id:
+            existingItem.item_detail_id || this.selectedItem.item_detail_id,
+          barang_id: existingItem.barang_id || this.selectedItem.barang_id,
+          kode_plu: existingItem.kode_plu || this.selectedItem.kode_plu,
+          kode_barcode:
+            existingItem.kode_barcode || this.selectedItem.kode_barcode,
+          nama_barang:
+            existingItem.nama_barang || this.selectedItem.nama_barang,
+          uom: existingItem.uom || this.selectedItem.uom,
+          tipe_barang:
+            existingItem.tipe_barang || this.selectedItem.tipe_barang,
+          is_decimal:
+            existingItem.is_decimal ?? this.selectedItem.is_decimal,
+        };
+        this.itemQuantity = this.parseStoredQuantity(
+          existingItem.qty,
+          existingItem.is_decimal,
+        );
+        this.itemNote = existingItem.note || "";
+        this.editIndex = existingIndex;
+      } else {
+        this.itemQuantity = 1;
+        this.itemNote = "";
+        this.editIndex = null;
+      }
+
+      this.showItemDetail = true;
+      this.barcodeInput = "";
+    },
+
     // =======================
     // CARI BARANG VIA API
     // =======================
@@ -2361,7 +2499,10 @@ export default {
       try {
         const response = await axios.post(
           `${teamBackendUrl}/api/item/code`,
-          { kode: searchCode },
+          {
+            kode: searchCode,
+            kode_lokasi: this.currentKodeLokasi || "",
+          },
           {
             headers: {
               Authorization: "Bearer " + (localStorage.getItem("token") || ""),
@@ -2376,6 +2517,15 @@ export default {
         }
 
         if (response.data && response.data.success) {
+          if (Array.isArray(response.data?.data?.items)) {
+            this.searchResultItems = response.data.data.items;
+            this.pendingSearchKeyword = response.data.data.keyword || searchCode;
+            this.pendingSearchCommand = barcodeCommand;
+            this.showSearchResultPopup = true;
+            this.barcodeInput = "";
+            return;
+          }
+
           // Mengambil data dari response API
           const data = response.data.data;
           const existingIndex = this.findExistingItemIndex(data, searchCode);

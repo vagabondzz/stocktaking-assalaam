@@ -27,39 +27,8 @@ class ItemController extends Controller {
     $kode = $request->kode;
     $kodeLokasi = $request->kode_lokasi;
 
-    // Cari barang berdasarkan PLU atau Barcode
-    $barang = Barang::where('BRG_CODE', $kode)
-        ->orWhere('BRG_CATALOG', $kode)
-        ->first();
-
-    if (!$barang) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Barang tidak ditemukan.',
-        ], 404);
-    }
-
-    // Ambil TIPE BARANG dari REF$TIPE_BARANG 
-    $tipeBarang = TipeBarang::find($barang->{'REF$TIPE_BARANG_ID'});
-
-    $tipeKode = $tipeBarang->TPBRG_CODE ?? '??';
-    $tipeNama = $tipeBarang->TPBRG_NAME ?? 'Tidak Dikenal';
-
-    // HANYA tipe 00 dan 06 yang diizinkan
-    if (!in_array($tipeKode, ['00', '06'])) {
-        return response()->json([
-            'success' => false,
-            'message' => "Kode PLU {$barang->BRG_CODE}, Barcode {$barang->BRG_CATALOG}, adalah tipe barang {$tipeNama}.",
-        ], 403);
-    }
-
-    // Ambil UOM dari REF$SATUAN 
-    $satuan = SatuanBarang::find($barang->{'REF$SATUAN_STOCK'});
-
-    $uom = $satuan->SAT_CODE ?? 'UNKNOWN';
     $tahun = Carbon::now()->year;
-    $formMode = 'create';
-    $existingItem = null;
+    $itemLokasi = null;
 
     try {
         $team = JWTAuth::parseToken()->authenticate();
@@ -72,8 +41,102 @@ class ItemController extends Controller {
         }
 
         $itemLokasi = $itemQuery->first();
+    } catch (\Exception $e) {
+        $itemLokasi = null;
+    }
 
-        if ($itemLokasi) {
+    // Prioritas 1: exact match berdasarkan PLU / barcode
+    $barang = Barang::where('BRG_CODE', $kode)
+        ->orWhere('BRG_CATALOG', $kode)
+        ->first();
+
+    if ($barang) {
+        $mappedBarang = $this->mapBarangResult($barang, $itemLokasi, $tahun);
+
+        if (!$mappedBarang['allowed']) {
+            return response()->json([
+                'success' => false,
+                'message' => "Kode PLU {$barang->BRG_CODE}, Barcode {$barang->BRG_CATALOG}, adalah tipe barang {$mappedBarang['tipe_barang']}.",
+            ], 403);
+        }
+
+        return response()->json([
+            'success' => true,
+            'search_type' => 'exact',
+            'data' => $mappedBarang['data'],
+        ]);
+    }
+
+    // Prioritas 2: pencarian nama barang / alias / merk
+    $barangList = Barang::query()
+        ->where(function ($query) use ($kode) {
+            $query->where('BRG_NAME', 'like', '%' . $kode . '%')
+                ->orWhere('BRG_ALIAS', 'like', '%' . $kode . '%')
+                ->orWhere('BRG_MERK', 'like', '%' . $kode . '%');
+        })
+        ->orderBy('BRG_NAME')
+        ->limit(20)
+        ->get();
+
+    if ($barangList->isEmpty()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Barang tidak ditemukan.',
+        ], 404);
+    }
+
+    $mappedResults = $barangList
+        ->map(fn ($barangItem) => $this->mapBarangResult($barangItem, $itemLokasi, $tahun))
+        ->filter(fn ($result) => $result['allowed'])
+        ->pluck('data')
+        ->values();
+
+    if ($mappedResults->isEmpty()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Barang ditemukan, tetapi semua hasil bukan tipe yang dapat dihitung.',
+        ], 403);
+    }
+
+    if ($mappedResults->count() === 1) {
+        return response()->json([
+            'success' => true,
+            'search_type' => 'name-single',
+            'data' => $mappedResults->first(),
+        ]);
+    }
+
+    return response()->json([
+        'success' => true,
+        'search_type' => 'name-multiple',
+        'message' => 'Ditemukan beberapa varian barang.',
+        'data' => [
+            'keyword' => $kode,
+            'items' => $mappedResults,
+        ],
+    ]);
+}
+
+    protected function mapBarangResult($barang, $itemLokasi = null, $tahun = null)
+    {
+        $tipeBarang = TipeBarang::find($barang->{'REF$TIPE_BARANG_ID'});
+        $tipeKode = $tipeBarang->TPBRG_CODE ?? '??';
+        $tipeNama = $tipeBarang->TPBRG_NAME ?? 'Tidak Dikenal';
+
+        if (!in_array($tipeKode, ['00', '06'])) {
+            return [
+                'allowed' => false,
+                'tipe_barang' => $tipeNama,
+                'data' => null,
+            ];
+        }
+
+        $satuan = SatuanBarang::find($barang->{'REF$SATUAN_STOCK'});
+        $uom = $satuan->SAT_CODE ?? 'UNKNOWN';
+        $formMode = 'create';
+        $existingItem = null;
+
+        if ($itemLokasi && $tahun) {
             $itemDetail = ItemDetail::where('ISITEAMITEMDETAIL_ISITEAMITEM_ID', $itemLokasi->ISITEAMITEM_ID)
                 ->where('ISITEAMITEMDETAIL_BRG_CODE', $barang->BRG_CODE)
                 ->where('YEAR', $tahun)
@@ -94,24 +157,21 @@ class ItemController extends Controller {
                 ];
             }
         }
-    } catch (\Exception $e) {
-        // Tetap kirim data barang jika token/lokasi belum tersedia.
-    }
 
-    // Return hasil JSON
-    return response()->json([
-        'success' => true,
-        'data' => [
-            'barang_id'   => $barang->BARANG_ID,
-            'kode_plu'    => $barang->BRG_CODE,
-            'kode_barcode'=> $barang->BRG_CATALOG,
-            'nama_barang' => $barang->BRG_NAME,
-            'uom'         => $uom,
+        return [
+            'allowed' => true,
             'tipe_barang' => $tipeNama,
-            'is_decimal'  => (int) $barang->BRG_IS_DECIMAL,
-            'form_mode'   => $formMode,
-            'existing_item' => $existingItem,
-        ],
-    ]);
-}
+            'data' => [
+                'barang_id' => $barang->BARANG_ID,
+                'kode_plu' => $barang->BRG_CODE,
+                'kode_barcode' => $barang->BRG_CATALOG,
+                'nama_barang' => $barang->BRG_NAME,
+                'uom' => $uom,
+                'tipe_barang' => $tipeNama,
+                'is_decimal' => (int) $barang->BRG_IS_DECIMAL,
+                'form_mode' => $formMode,
+                'existing_item' => $existingItem,
+            ],
+        ];
+    }
 }
