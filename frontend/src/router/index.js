@@ -3,6 +3,7 @@ import LoginPage from "../pages/LoginPage.vue";
 import LokasiPage from "../pages/LokasiPage.vue";
 import DasboardAdmin from "../pages/DasboardAdmin.vue";
 import AdminOpenLocationsPage from "../pages/AdminOpenLocationsPage.vue";
+import AdminTeamDeviceLimitsPage from "../pages/AdminTeamDeviceLimitsPage.vue";
 import ListsoPage from "../pages/ListsoPage.vue";
 import { clearAuthSession, getAuthRole, isAuthenticated } from "../utils/auth";
 import TambahAkun from "../pages/TambahAkun.vue";
@@ -26,6 +27,11 @@ const routes = [
   {
     path: "/admin/open-locations",
     component: AdminOpenLocationsPage,
+    meta: { requiresAuth: true, role: "admin" },
+  },
+  {
+    path: "/admin/team-device-limits",
+    component: AdminTeamDeviceLimitsPage,
     meta: { requiresAuth: true, role: "admin" },
   },
   {

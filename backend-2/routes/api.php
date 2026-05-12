@@ -9,6 +9,7 @@ use App\Http\Controllers\DraftProgressController;
 use App\Http\Controllers\AdminManageController;
 use App\Http\Controllers\AdminOpenLocationController;
 use App\Http\Controllers\AdminLocationProgressController;
+use App\Http\Controllers\AdminTeamController;
 use App\Http\Controllers\ReportSnapshotController;
 use Illuminate\Support\Facades\Route;
 
@@ -17,6 +18,7 @@ Route::group(['prefix' => 'admin', 'middleware' => ['api', 'report.token']], fun
     Route::post('/logout/location', [AdminManageController::class, 'logoutLokasi']);
     Route::get('/open-locations', [AdminOpenLocationController::class, 'index']);
     Route::get('/location-progress', [AdminLocationProgressController::class, 'index']);
+    Route::get('/teams', [AdminTeamController::class, 'index']);
 });
 
 Route::group(['prefix' => 'auth', 'middleware' => 'api'], function () {
@@ -24,6 +26,8 @@ Route::group(['prefix' => 'auth', 'middleware' => 'api'], function () {
     Route::post('/login/team', [AuthTeamController::class, 'loginTeam']);
     Route::post('/login/location', [AuthTeamController::class, 'validasiLokasi']);
     Route::post('/logout/location', [AuthTeamController::class, 'logoutLokasi']);
+    Route::post('/logout/team', [AuthTeamController::class, 'logoutTeam']);
+    Route::post('/session-status', [AuthTeamController::class, 'teamSessionStatus']);
 });
 
 Route::group(['prefix' => 'item', 'middleware' => 'api'], function () {

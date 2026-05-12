@@ -94,6 +94,7 @@
 <script>
 import { Html5Qrcode } from "html5-qrcode";
 import axios from "axios";
+import { getOrCreateDeviceIdentity } from "../utils/auth";
 
 const teamBackendUrl =
   import.meta.env.VITE_BACKEND_2 || import.meta.env.VITE_BACKEND;
@@ -113,10 +114,67 @@ export default {
       flashOn: false,
       flashAvailable: false,
       isSwitchingCamera: false,
+      deviceSessionInterval: null,
     };
   },
 
+  mounted() {
+    this.deviceSessionInterval = window.setInterval(() => {
+      this.verifyDeviceSessionStatus();
+    }, 10000);
+    this.verifyDeviceSessionStatus();
+  },
+
+  beforeUnmount() {
+    if (this.deviceSessionInterval) {
+      clearInterval(this.deviceSessionInterval);
+      this.deviceSessionInterval = null;
+    }
+  },
+
   methods: {
+    async verifyDeviceSessionStatus() {
+      const token = localStorage.getItem("token") || "";
+
+      if (!token) {
+        return;
+      }
+
+      try {
+        const deviceIdentity = getOrCreateDeviceIdentity();
+        const response = await axios.post(
+          `${teamBackendUrl}/api/auth/session-status`,
+          {
+            device_id: deviceIdentity.id,
+          },
+          {
+            headers: {
+              Authorization: "Bearer " + token,
+            },
+          },
+        );
+
+        if (response.data?.data?.is_active === false) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("current_kode_lokasi");
+          this.errorMessage = "Sesi device Anda dinonaktifkan oleh admin";
+
+          setTimeout(() => {
+            this.$router.push("/");
+          }, 300);
+        }
+      } catch (error) {
+        if (error.response?.status === 401) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("current_kode_lokasi");
+          this.$router.push("/");
+          return;
+        }
+
+        console.warn("Gagal memeriksa status sesi device:", error);
+      }
+    },
+
     buildActiveTeamMessage(activeTeam) {
       if (!activeTeam || typeof activeTeam !== "object") {
         return "Lokasi tersebut sedang digunakan oleh team yang lain";

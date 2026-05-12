@@ -724,6 +724,7 @@
 <script>
 import { Html5Qrcode } from "html5-qrcode";
 import axios from "axios";
+import { getOrCreateDeviceIdentity } from "../utils/auth";
 
 const teamBackendUrl =
   import.meta.env.VITE_BACKEND_2 || import.meta.env.VITE_BACKEND;
@@ -800,11 +801,14 @@ export default {
       pendingSearchCommand: null,
       isExportingPdf: false,
       tokenExpiryInterval: null,
+      deviceSessionInterval: null,
       locationStatusInterval: null,
       tokenExpiryTimeout: null,
       draftSyncTimeout: null,
       isClosingExpiredSession: false,
       forceAllowRouteLeave: false,
+      hasSentUnloadLogout: false,
+      unloadLogoutHandler: null,
     };
   },
   mounted() {
@@ -819,15 +823,25 @@ export default {
     this.tokenExpiryInterval = window.setInterval(() => {
       this.verifyTokenSession();
     }, 30000);
+    this.deviceSessionInterval = window.setInterval(() => {
+      this.verifyDeviceSessionStatus();
+    }, 10000);
     this.locationStatusInterval = window.setInterval(() => {
       this.monitorActiveLocationStatus();
     }, 15000);
     this.scheduleTokenExpiryHandling();
+    this.registerUnloadLogoutHandler();
+    this.verifyDeviceSessionStatus();
   },
   beforeUnmount() {
     if (this.tokenExpiryInterval) {
       clearInterval(this.tokenExpiryInterval);
       this.tokenExpiryInterval = null;
+    }
+
+    if (this.deviceSessionInterval) {
+      clearInterval(this.deviceSessionInterval);
+      this.deviceSessionInterval = null;
     }
 
     if (this.locationStatusInterval) {
@@ -844,6 +858,8 @@ export default {
       clearTimeout(this.draftSyncTimeout);
       this.draftSyncTimeout = null;
     }
+
+    this.unregisterUnloadLogoutHandler();
   },
   computed: {
     hasCurrentPendingChanges() {
@@ -983,6 +999,41 @@ export default {
       return true;
     },
 
+    async verifyDeviceSessionStatus() {
+      const token = localStorage.getItem("token");
+
+      if (!token || this.isClosingExpiredSession) {
+        return;
+      }
+
+      try {
+        const deviceIdentity = getOrCreateDeviceIdentity();
+        const response = await axios.post(
+          `${teamBackendUrl}/api/auth/session-status`,
+          {
+            device_id: deviceIdentity.id,
+          },
+          {
+            headers: {
+              Authorization: "Bearer " + token,
+            },
+          },
+        );
+
+        if (response.data?.data?.is_active === false) {
+          this.clearSessionAndRedirectToLogin(
+            "Sesi device Anda dinonaktifkan oleh admin",
+          );
+        }
+      } catch (error) {
+        if (this.handleExpiredToken(error)) {
+          return;
+        }
+
+        console.warn("Gagal memeriksa status sesi device:", error);
+      }
+    },
+
     async closeActiveLocationBeforeRedirect(token, kodeLokasi) {
       if (!token || !kodeLokasi) {
         return;
@@ -1000,6 +1051,104 @@ export default {
         );
       } catch (error) {
         console.warn("Gagal menutup lokasi saat sesi berakhir:", error);
+      }
+    },
+
+    buildAuthHeaders(token) {
+      return {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      };
+    },
+
+    sendKeepaliveRequest(url, token, payload) {
+      try {
+        fetch(url, {
+          method: "POST",
+          headers: this.buildAuthHeaders(token),
+          body: JSON.stringify(payload),
+          keepalive: true,
+        }).catch(() => {});
+      } catch (error) {
+        console.warn("Gagal mengirim keepalive request:", error);
+      }
+    },
+
+    sendBestEffortLogoutOnUnload() {
+      if (this.hasSentUnloadLogout) {
+        return;
+      }
+
+      const token = localStorage.getItem("token") || "";
+      const kodeLokasi =
+        this.currentKodeLokasi ||
+        localStorage.getItem("current_kode_lokasi") ||
+        "";
+
+      if (!token) {
+        return;
+      }
+
+      const deviceIdentity = getOrCreateDeviceIdentity();
+      this.hasSentUnloadLogout = true;
+
+      if (kodeLokasi) {
+        this.sendKeepaliveRequest(
+          `${teamBackendUrl}/api/auth/logout/location`,
+          token,
+          { kode_lokasi: kodeLokasi },
+        );
+      }
+
+      this.sendKeepaliveRequest(
+        `${teamBackendUrl}/api/auth/logout/team`,
+        token,
+        { device_id: deviceIdentity.id },
+      );
+    },
+
+    registerUnloadLogoutHandler() {
+      this.unregisterUnloadLogoutHandler();
+
+      this.unloadLogoutHandler = () => {
+        this.sendBestEffortLogoutOnUnload();
+      };
+
+      window.addEventListener("pagehide", this.unloadLogoutHandler);
+      window.addEventListener("beforeunload", this.unloadLogoutHandler);
+    },
+
+    unregisterUnloadLogoutHandler() {
+      if (!this.unloadLogoutHandler) {
+        return;
+      }
+
+      window.removeEventListener("pagehide", this.unloadLogoutHandler);
+      window.removeEventListener("beforeunload", this.unloadLogoutHandler);
+      this.unloadLogoutHandler = null;
+    },
+
+    async releaseActiveDeviceSession(token) {
+      if (!token) {
+        return;
+      }
+
+      try {
+        const deviceIdentity = getOrCreateDeviceIdentity();
+
+        await axios.post(
+          `${teamBackendUrl}/api/auth/logout/team`,
+          {
+            device_id: deviceIdentity.id,
+          },
+          {
+            headers: {
+              Authorization: "Bearer " + token,
+            },
+          },
+        );
+      } catch (error) {
+        console.warn("Gagal melepas sesi device team:", error);
       }
     },
 
@@ -1024,6 +1173,8 @@ export default {
         "";
 
       await this.closeActiveLocationBeforeRedirect(token, kodeLokasi);
+      this.hasSentUnloadLogout = true;
+      await this.releaseActiveDeviceSession(token);
 
       localStorage.removeItem("token");
       localStorage.removeItem("current_kode_lokasi");
@@ -3253,9 +3404,16 @@ export default {
         preserveToken = false,
         preserveModal = false,
         preserveKodeLokasi = "",
+        releaseDevice = false,
       } = {},
     ) {
+      const token = localStorage.getItem("token") || "";
+
       if (!kodeLokasi) {
+        if (releaseDevice) {
+          await this.releaseActiveDeviceSession(token);
+        }
+
         this.resetLocationState({
           preserveToken,
           preserveModal,
@@ -3274,7 +3432,7 @@ export default {
         { kode_lokasi: kodeLokasi },
         {
           headers: {
-            Authorization: "Bearer " + (localStorage.getItem("token") || ""),
+            Authorization: "Bearer " + token,
           },
         },
       );
@@ -3285,6 +3443,11 @@ export default {
 
       if (!response.data?.success) {
         throw new Error(response.data?.message || "Logout lokasi gagal");
+      }
+
+      if (releaseDevice) {
+        this.hasSentUnloadLogout = true;
+        await this.releaseActiveDeviceSession(token);
       }
 
       this.resetLocationState({
@@ -3335,12 +3498,18 @@ export default {
         }
 
         if (loginStatus.status !== null && !loginStatus.isOpen) {
+          this.hasSentUnloadLogout = true;
+          await this.releaseActiveDeviceSession(
+            localStorage.getItem("token") || "",
+          );
           this.clearLocationSessionState();
           this.$router.push("/");
           return;
         }
 
-        await this.logoutLocationByCode(kodeLokasi);
+        await this.logoutLocationByCode(kodeLokasi, {
+          releaseDevice: true,
+        });
       } catch (err) {
         console.error(err);
         if (this.handleExpiredToken(err)) {

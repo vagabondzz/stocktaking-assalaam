@@ -67,3 +67,55 @@ export function isAuthenticated() {
 
   return true;
 }
+
+export function getOrCreateDeviceIdentity() {
+  const storageKey = "team_device_identity";
+  const existing = localStorage.getItem(storageKey);
+
+  if (existing) {
+    try {
+      return JSON.parse(existing);
+    } catch (error) {
+      console.error("Gagal membaca device identity:", error);
+    }
+  }
+
+  const identity = {
+    id:
+      "device-" +
+      Math.random().toString(36).slice(2) +
+      Date.now().toString(36),
+    name: buildDeviceName(),
+    platform: navigator.platform || "Unknown Platform",
+  };
+
+  localStorage.setItem(storageKey, JSON.stringify(identity));
+
+  return identity;
+}
+
+function buildDeviceName() {
+  const userAgent = navigator.userAgent || "";
+
+  if (/android/i.test(userAgent)) {
+    return "Android Device";
+  }
+
+  if (/iphone|ipad|ipod/i.test(userAgent)) {
+    return "iPhone / iPad";
+  }
+
+  if (/windows/i.test(userAgent)) {
+    return "Windows Browser";
+  }
+
+  if (/macintosh|mac os x/i.test(userAgent)) {
+    return "Mac Browser";
+  }
+
+  if (/linux/i.test(userAgent)) {
+    return "Linux Browser";
+  }
+
+  return "Browser Device";
+}

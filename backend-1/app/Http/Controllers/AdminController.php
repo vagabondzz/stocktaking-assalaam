@@ -162,4 +162,39 @@ public function login(Request $request)
 
         return response()->json($response->json(), $response->status());
     }
+
+    public function teamDeviceLimits(Request $request)
+    {
+        $backend2Url = env('BACKEND2_BASE_URL') . '/api/admin/team-device-limits';
+        $backend2Token = env('BACKEND2_TOKEN');
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $backend2Token,
+            'X-Report-Token' => $backend2Token,
+        ])->get($backend2Url, [
+            'keyword' => $request->input('keyword'),
+            'year' => $request->input('year'),
+        ]);
+
+        return response()->json($response->json(), $response->status());
+    }
+
+    public function updateTeamDeviceLimit(Request $request, string $teamNo)
+    {
+        $request->validate([
+            'max_devices' => 'required|integer|min:1|max:100',
+        ]);
+
+        $backend2Url = env('BACKEND2_BASE_URL') . '/api/admin/team-device-limits/' . $teamNo;
+        $backend2Token = env('BACKEND2_TOKEN');
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $backend2Token,
+            'X-Report-Token' => $backend2Token,
+        ])->put($backend2Url, [
+            'max_devices' => (int) $request->input('max_devices'),
+        ]);
+
+        return response()->json($response->json(), $response->status());
+    }
 }

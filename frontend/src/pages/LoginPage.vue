@@ -138,7 +138,11 @@
 import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import axios from "axios";
-import { clearAuthSession, setAuthSession } from "../utils/auth";
+import {
+  clearAuthSession,
+  getOrCreateDeviceIdentity,
+  setAuthSession,
+} from "../utils/auth";
 
 const router = useRouter();
 const adminBackendUrl =
@@ -271,16 +275,21 @@ async function handleLogin() {
       }
     }
 
-    if (!isTeamCredential) {
+  if (!isTeamCredential) {
       errorMessage.value = "Kode tim harus 6 digit angka, contoh: 001010";
       return;
     }
+
+    const deviceIdentity = getOrCreateDeviceIdentity();
 
     const teamResponse = await axios.post(
       `${teamBackendUrl}/api/auth/login/team`,
       {
         username,
         password: formattedTeamPassword,
+        device_id: deviceIdentity.id,
+        device_name: deviceIdentity.name,
+        platform: deviceIdentity.platform,
       },
     );
 

@@ -58,6 +58,19 @@
             <span class="text-sm">Lokasi Aktif</span>
           </RouterLink>
 
+          <RouterLink
+            to="/admin/team-device-limits"
+            class="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition-all"
+            :class="{
+              'bg-orange-50 text-orange-600': $route.path === '/admin/team-device-limits',
+              'text-slate-600 hover:bg-slate-50': $route.path !== '/admin/team-device-limits',
+            }"
+            @click="closeSidebar"
+          >
+            <i class="fa-solid fa-mobile-screen-button w-5 text-base lg:text-lg"></i>
+            <span class="text-sm">Batas Device Team</span>
+          </RouterLink>
+
           <!-- Divider -->
           <div class="my-3 lg:my-4 border-t border-slate-100"></div>
 

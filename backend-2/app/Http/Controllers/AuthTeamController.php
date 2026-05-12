@@ -7,6 +7,7 @@ use App\Models\Team;
 use App\Models\Item;
 use App\Support\LocationSessionService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Http;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class AuthTeamController extends Controller
@@ -17,42 +18,146 @@ class AuthTeamController extends Controller
     }
 
     public function loginTeam(Request $request)
-{
-    $request->validate([
-        'username' => 'required',
-        'password' => 'required'
-    ]);
+    {
+        $request->validate([
+            'username' => 'required',
+            'password' => 'required',
+            'device_id' => 'required|string|max:191',
+            'device_name' => 'nullable|string|max:191',
+            'platform' => 'nullable|string|max:100',
+        ]);
 
-    $team = Team::where('SOPT_NO', $request->username)
-                ->where('KODE_TEAM', $request->password)
-                ->first();
+        $team = Team::where('SOPT_NO', $request->username)
+                    ->where('KODE_TEAM', $request->password)
+                    ->first();
 
-    if (!$team) {
+        if (!$team) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Username atau password salah'
+            ], 401);
+        }
+
+        $deviceCheckResponse = $this->callBackend1(
+            '/api/report/team-device-access/check',
+            [
+                'team_id' => $team->STOCK_OPNAME_TEAM_ID,
+                'team_no' => $team->SOPT_NO,
+                'kode_team' => $team->KODE_TEAM,
+                'device_id' => $request->device_id,
+                'device_name' => $request->input('device_name'),
+            ]
+        );
+
+        if (!$deviceCheckResponse->successful()) {
+            return response()->json(
+                $deviceCheckResponse->json(),
+                $deviceCheckResponse->status()
+            );
+        }
+
+        $token = JWTAuth::fromUser($team);
+        $payload = JWTAuth::setToken($token)->getPayload();
+        $expiresAt = $payload->get('exp')
+            ? Carbon::createFromTimestamp($payload->get('exp'))
+            : null;
+
+        $registerSessionResponse = $this->callBackend1(
+            '/api/report/team-device-access/register',
+            [
+                'team_id' => $team->STOCK_OPNAME_TEAM_ID,
+                'team_no' => $team->SOPT_NO,
+                'kode_team' => $team->KODE_TEAM,
+                'device_id' => $request->device_id,
+                'device_name' => $request->input('device_name'),
+                'platform' => $request->input('platform'),
+                'user_agent' => substr((string) $request->userAgent(), 0, 65535),
+                'ip_address' => $request->ip(),
+                'token_identifier' => (string) $payload->get('jti', ''),
+                'expires_at' => optional($expiresAt)->toIso8601String(),
+            ]
+        );
+
+        if (!$registerSessionResponse->successful()) {
+            return response()->json(
+                $registerSessionResponse->json(),
+                $registerSessionResponse->status()
+            );
+        }
+
+        $teamMaxDevices = (int) ($deviceCheckResponse->json('data.max_devices') ?? 1);
+
+        $teamData = [
+            'stock_opname_team_id' => $team->STOCK_OPNAME_TEAM_ID,
+            'no_team' => $team->SOPT_NO,
+            'penghitung_1' => $team->SOPT_PENGHITUNG,
+            'penghitung_2' => $team->SOPT_HELPER,
+            'kode_team' => $team->KODE_TEAM,
+            'max_devices' => $teamMaxDevices,
+        ];
+
         return response()->json([
-            'success' => false,
-            'message' => 'Username atau password salah'
-        ], 401);
+            'success' => true,
+            'message' => 'Login berhasil',
+            'token' => $token,
+            'data' => $teamData
+        ]);
     }
 
-    // generate JWT token
-    $token = JWTAuth::fromUser($team);
+    protected function callBackend1(string $path, array $payload)
+    {
+        $backend1BaseUrl = rtrim((string) env('BACKEND1_BASE_URL', 'http://127.0.0.1:8001'), '/');
+        $backend1Token = env('BACKEND1_TOKEN', env('REPORT_SERVICE_TOKEN'));
 
-    // format data team
-    $teamData = [
-        'stock_opname_team_id' => $team->STOCK_OPNAME_TEAM_ID,
-        'no_team' => $team->SOPT_NO,
-        'penghitung_1' => $team->SOPT_PENGHITUNG,
-        'penghitung_2' => $team->SOPT_HELPER,
-        'kode_team' => $team->KODE_TEAM
-    ];
+        return Http::withHeaders([
+            'Authorization' => 'Bearer ' . $backend1Token,
+            'X-Report-Token' => $backend1Token,
+        ])->post($backend1BaseUrl . $path, $payload);
+    }
 
-    return response()->json([
-        'success' => true,
-        'message' => 'Login berhasil',
-        'token' => $token,
-        'data' => $teamData
-    ]);
-}
+    public function logoutTeam(Request $request)
+    {
+        $request->validate([
+            'device_id' => 'required|string|max:191',
+        ]);
+
+        $team = JWTAuth::parseToken()->authenticate();
+
+        $response = $this->callBackend1(
+            '/api/report/team-device-access/unregister',
+            [
+                'team_no' => $team->SOPT_NO,
+                'device_id' => $request->input('device_id'),
+            ]
+        );
+
+        return response()->json(
+            $response->json(),
+            $response->status()
+        );
+    }
+
+    public function teamSessionStatus(Request $request)
+    {
+        $request->validate([
+            'device_id' => 'required|string|max:191',
+        ]);
+
+        $team = JWTAuth::parseToken()->authenticate();
+
+        $response = $this->callBackend1(
+            '/api/report/team-device-access/status',
+            [
+                'team_no' => $team->SOPT_NO,
+                'device_id' => $request->input('device_id'),
+            ]
+        );
+
+        return response()->json(
+            $response->json(),
+            $response->status()
+        );
+    }
 
     public function validasiLokasi(Request $request)
     {
