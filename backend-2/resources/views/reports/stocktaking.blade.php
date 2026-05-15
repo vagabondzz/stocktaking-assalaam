@@ -12,7 +12,6 @@
             padding: 20px 24px 40px;
         }
 
-        /* ── Header ── */
         .header {
             display: table;
             width: 100%;
@@ -27,7 +26,6 @@
 
         .divider { border: none; border-top: 1.5px solid #333; margin: 8px 0 12px; }
 
-        /* ── Meta Grid ── */
         .meta-grid {
             display: table;
             width: 60%;
@@ -46,23 +44,21 @@
         .meta-sep   { display: table-cell; padding: 2px 6px; color: #444; }
         .meta-value { display: table-cell; padding: 2px 0; }
 
-        /* ── Section Title ── */
         .section-title {
             font-size: 12px;
             font-weight: bold;
             margin: 18px 0 5px;
             padding: 4px 8px;
-            color: #000000ff;
+            color: #000;
             display: inline-block;
         }
         .section-count {
             font-size: 11px;
             font-weight: normal;
-            color: #000000ff;
+            color: #000;
             margin-left: 6px;
         }
 
-        /* ── Table ── */
         table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
         th {
             background: #555;
@@ -87,7 +83,6 @@
         .muted { color: #777; font-size: 10px; }
         .empty-cell { text-align: center; color: #aaa; font-style: italic; padding: 10px; }
 
-        /* ── Footer ── */
         .footer {
             margin-top: 20px;
             border-top: 1px solid #ccc;
@@ -104,13 +99,15 @@
 <body>
 
     @php
-        $allItems = collect($report['items'] ?? []);
-        $oldItems = $allItems->filter(fn($i) => empty($i['IS_NEW_ITEM']))->values();
-        $newItems = $allItems->filter(fn($i) => !empty($i['IS_NEW_ITEM']))->values();
-        $deletedItems = collect($report['deleted_items'] ?? [])->values();
+        $displayItems = collect($report['items'] ?? [])
+            ->map(function ($item) {
+                $item['item_status_label'] = !empty($item['IS_NEW_ITEM']) ? 'Barang Baru' : 'Barang Lama';
+                return $item;
+            })
+            ->sortBy(fn ($item) => strtolower((string) ($item['ISITEAMITEMDETAIL_BRG_NAME'] ?? '')))
+            ->values();
     @endphp
 
-    {{-- ── Header ── --}}
     <div class="header">
         <div class="header-logo">
             @if(!empty($report['logo_base64']))
@@ -119,7 +116,7 @@
         </div>
         <div class="header-text">
             <h2>STOCKTAKING REPORT</h2>
-            <p>Laporan Hasil Penghitungan Stok Barang</p>
+            <p>Jl. Ahmad Yani No. 308, Pabelan, Kartasura, Sukoharjo</p>
         </div>
         <div class="header-date">
             Dicetak:<br>{{ $report['generated_at'] ?? '-' }}
@@ -128,7 +125,6 @@
 
     <hr class="divider">
 
-    {{-- ── Meta Info ── --}}
     <div class="meta-grid">
         <div class="meta-row">
             <span class="meta-label">Tim</span>
@@ -157,10 +153,9 @@
         </div>
     </div>
 
-    {{-- ── Tabel Barang Baru ── --}}
     <div class="section-title">
-        Barang Baru
-        <span class="section-count">({{ $newItems->count() }} item)</span>
+        Daftar Barang
+        <span class="section-count">({{ $displayItems->count() }} item)</span>
     </div>
     <table>
         <thead>
@@ -170,11 +165,11 @@
                 <th>Nama Barang</th>
                 <th class="col-uom">UOM</th>
                 <th class="col-qty">Qty</th>
-                <th>Logs</th>
+                <th>History</th>
             </tr>
         </thead>
         <tbody>
-            @forelse($newItems as $index => $item)
+            @forelse($displayItems as $index => $item)
                 <tr>
                     <td class="col-no">{{ $index + 1 }}</td>
                     <td>{{ $item['ISITEAMITEMDETAIL_BRG_CODE'] ?? '-' }}</td>
@@ -189,110 +184,26 @@
                                     if ($rawQty === null) {
                                         $fmtQty = '-';
                                     } elseif (($item['IS_DECIMAL'] ?? 1) == 0) {
-                                        $fmtQty = (string)(int) $rawQty;
+                                        $fmtQty = (string) (int) $rawQty;
                                     } else {
-                                        $fmtQty = rtrim(rtrim(number_format((float)$rawQty, 3, ',', '.'), '0'), ',');
+                                        $fmtQty = rtrim(rtrim(number_format((float) $rawQty, 3, ',', '.'), '0'), ',');
                                     }
                                 @endphp
-                                <div class="muted">{{ $log['DATE_CREATE'] ? date('d-m-Y', strtotime($log['DATE_CREATE'])) : '-' }} &mdash; {{ $fmtQty }}</div>
+                                <div class="muted">{{ $log['DATE_CREATE'] ? date('d-m-Y', strtotime($log['DATE_CREATE'])) : '-' }} - {{ $fmtQty }}</div>
                             @endforeach
                         @else
-                            <span class="muted">Tidak ada log</span>
+                            <span class="muted">Tidak ada perubahan</span>
                         @endif
                     </td>
                 </tr>
             @empty
-                <tr><td colspan="6" class="empty-cell">Tidak ada barang baru</td></tr>
+                <tr><td colspan="7" class="empty-cell">Tidak ada data barang</td></tr>
             @endforelse
         </tbody>
     </table>
 
-    {{-- ── Tabel Barang Lama ── --}}
-    <div class="section-title">
-        Barang Terhapus
-        <span class="section-count">({{ $deletedItems->count() }} item)</span>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th class="col-no">No</th>
-                <th>Kode Barang</th>
-                <th>Nama Barang</th>
-                <th class="col-uom">UOM</th>
-                <th class="col-qty">Qty Sebelum</th>
-                <th>Catatan</th>
-                <th>Waktu Hapus</th>
-            </tr>
-        </thead>
-        <tbody>
-            @forelse($deletedItems as $index => $item)
-                <tr>
-                    <td class="col-no">{{ $index + 1 }}</td>
-                    <td>{{ $item['kode_plu'] ?? $item['kode_barcode'] ?? '-' }}</td>
-                    <td>{{ $item['nama_barang'] ?? '-' }}</td>
-                    <td class="col-uom">{{ $item['uom'] ?? '-' }}</td>
-                    <td class="col-qty">{{ $item['qty_sebelumnya'] ?? '-' }}</td>
-                    <td>{{ $item['note_sebelumnya'] ?? '-' }}</td>
-                    <td>{{ !empty($item['deleted_at']) ? date('d-m-Y H:i', strtotime($item['deleted_at'])) : '-' }}</td>
-                </tr>
-            @empty
-                <tr><td colspan="7" class="empty-cell">Tidak ada barang terhapus</td></tr>
-            @endforelse
-        </tbody>
-    </table>
-
-    <div class="section-title">
-        Barang Lama
-        <span class="section-count">({{ $oldItems->count() }} item)</span>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th class="col-no">No</th>
-                <th>Kode Barang</th>
-                <th>Nama Barang</th>
-                <th class="col-uom">UOM</th>
-                <th class="col-qty">Qty</th>
-                <th>Logs</th>
-            </tr>
-        </thead>
-        <tbody>
-            @forelse($oldItems as $index => $item)
-                <tr>
-                    <td class="col-no">{{ $index + 1 }}</td>
-                    <td>{{ $item['ISITEAMITEMDETAIL_BRG_CODE'] ?? '-' }}</td>
-                    <td>{{ $item['ISITEAMITEMDETAIL_BRG_NAME'] ?? '-' }}</td>
-                    <td class="col-uom">{{ $item['ISITEAMITEMDETAIL_BRG_UOM'] ?? '-' }}</td>
-                    <td class="col-qty">{{ $item['ISITEAMITEMDETAIL_QTY'] ?? '-' }}</td>
-                    <td>
-                        @if(!empty($item['logs']))
-                            @foreach($item['logs'] as $log)
-                                @php
-                                    $rawQty = $log['LOG_NEWQTY'] ?? null;
-                                    if ($rawQty === null) {
-                                        $fmtQty = '-';
-                                    } elseif (($item['IS_DECIMAL'] ?? 1) == 0) {
-                                        $fmtQty = (string)(int) $rawQty;
-                                    } else {
-                                        $fmtQty = rtrim(rtrim(number_format((float)$rawQty, 3, ',', '.'), '0'), ',');
-                                    }
-                                @endphp
-                                <div class="muted">{{ $log['DATE_CREATE'] ? date('d-m-Y', strtotime($log['DATE_CREATE'])) : '-' }} &mdash; {{ $fmtQty }}</div>
-                            @endforeach
-                        @else
-                            <span class="muted">Tidak ada log</span>
-                        @endif
-                    </td>
-                </tr>
-            @empty
-                <tr><td colspan="6" class="empty-cell">Tidak ada barang lama</td></tr>
-            @endforelse
-        </tbody>
-    </table>
-
-    {{-- ── Footer ── --}}
     <div class="footer">
-        <span class="footer-left">Stocktaking Report &mdash; {{ $report['team']['kode_team'] ?? '-' }}</span>
+        <span class="footer-left">Stocktaking Report - {{ $report['team']['kode_team'] ?? '-' }}</span>
         <span class="footer-right">{{ $report['generated_at'] ?? '-' }}</span>
     </div>
 
